@@ -1672,7 +1672,7 @@ restart_all_tunnels() {
 
 # Remove a specific tunnel
 remove_tunnel() {
-    local tunnel_name="$1"
+    local tunnel_name="${1:-}"
     
     if [ -z "$tunnel_name" ]; then
         print_header "Remove Tunnel"
@@ -2290,7 +2290,7 @@ ${GREEN}Mode: ${MODE^^}${NC}"
         
         # Generate key immediately
         if command -v openssl &> /dev/null; then
-            ENCRYPTION_KEY=$(openssl rand -base64 32)
+            ENCRYPTION_KEY=$(openssl rand 64 | tr -dc 'A-Za-z' | head -c 16)
         else
             ENCRYPTION_KEY=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | base64)
         fi
@@ -2737,7 +2737,7 @@ show_management_menu() {
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}1)${NC} 📊 List/Status of all tunnels                         ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} ▶️  Start all tunnels                                 ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}3)${NC} ⏹️  Stop all tunnels                                  ${MAGENTA}${DIM}│${NC}"
-        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} 🔄 Restart all tunnels                                ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}4)${NC} 🔄 Restart all tunnels                                ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}5)${NC} ${ICON_LOGS} Monitor all tunnels (live logs)                ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}6)${NC} 🗑️  Remove a tunnel                                   ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}7)${NC} ⚙️  Options (Edit tunnel settings)                    ${MAGENTA}${DIM}│${NC}"
