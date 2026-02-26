@@ -20,6 +20,22 @@ BOLD='\033[1m'
 NC='\033[0m'  # No Color
 
 # DELTA Banner (branding)
+
+# Generate 16-letter encryption key (A-Z/a-z only)
+gen_alpha16() {
+    local k=""
+    if command -v openssl >/dev/null 2>&1; then
+        k=$(openssl rand 64 | tr -dc 'A-Za-z' | head -c 16)
+    else
+        k=$(dd if=/dev/urandom bs=64 count=1 2>/dev/null | tr -dc 'A-Za-z' | head -c 16)
+    fi
+    # very last fallback (should almost never happen)
+    if [ ${#k} -lt 16 ]; then
+        k=$(date +%s%N | tr -dc 'A-Za-z' | head -c 16)
+    fi
+    echo "$k"
+}
+
 show_delta_banner() {
   clear 2>/dev/null || true
   echo -e "${MAGENTA}${BOLD}"
@@ -589,14 +605,20 @@ generate_encryption_key() {
         fi
     fi
 
-    echo -e "\n${YELLOW}Encryption Key:${NC}"
-    echo -e "\n${CYAN}============================================${NC}"
-    echo -e "${CYAN}  IMPORTANT: COPY THIS ENCRYPTION KEY!${NC}"
-    echo -e "${CYAN}============================================${NC}\n"
-    echo -e "${WHITE}${ENCRYPTION_KEY}${NC}\n"
-    echo -e "${CYAN}============================================${NC}"
-    echo -e "You will need this key when setting up the client."
-    read -p "Press Enter after you have copied the key..." _
+    
+echo -e "\n${YELLOW}Encryption Key:${NC}"
+
+# Generate a 16-letter key (A-Z/a-z only)
+ENCRYPTION_KEY="$(gen_alpha16)"
+
+echo -e "\n${CYAN}============================================${NC}"
+echo -e "  ${BOLD}${YELLOW}IMPORTANT: COPY THIS ENCRYPTION KEY!${NC}"
+echo -e "${CYAN}============================================${NC}\n"
+echo -e "${BOLD}${WHITE}${ENCRYPTION_KEY}${NC}\n"
+echo -e "${CYAN}============================================${NC}"
+echo -e "${WHITE}You will need this key when setting up the client.${NC}"
+echo -e "${CYAN}============================================${NC}"
+read -p "Press Enter after you have copied the key..." _
 }
 
 # Download paqet binary
@@ -2415,12 +2437,7 @@ step "Set MTU"
         local enc_key=""
         read -p "Enter encryption key from server: " enc_key
         if [ -z "$enc_key" ]; then
-            # Generate new key if not provided
-            if command -v openssl &> /dev/null; then
-                enc_key=$(openssl rand -base64 32)
-            else
-                enc_key=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | base64)
-            fi
+            enc_key="$(gen_alpha16)"
             echo -e "  ${YELLOW}Generated new key: $enc_key${NC}"
         fi
         TUNNEL_KEYS+=("$enc_key")
@@ -2523,11 +2540,7 @@ step "Set MTU"
         
         # Generate encryption key
         local enc_key=""
-        if command -v openssl &> /dev/null; then
-            enc_key=$(openssl rand -base64 32)
-        else
-            enc_key=$(dd if=/dev/urandom bs=1 count=32 2>/dev/null | base64)
-        fi
+        enc_key="$(gen_alpha16)"
         TUNNEL_KEYS+=("$enc_key")
         
         echo -e "\n${CYAN}============================================${NC}"
@@ -2645,13 +2658,13 @@ show_main_menu() {
 
     echo -e "${MAGENTA}${DIM}┌──────────────────────────────────────────────────────────┐${NC}"
     echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}1)${NC} ${ICON_DEPLOY} Install Tunnel                                      ${MAGENTA}${DIM}│${NC}"
-    echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}4)${NC} ${ICON_GEAR} Manage Existing Tunnels                             ${MAGENTA}${DIM}│${NC}"
+    echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} ${ICON_GEAR} Manage Existing Tunnels                             ${MAGENTA}${DIM}│${NC}"
     echo -e "${MAGENTA}${DIM}└──────────────────────────────────────────────────────────┘${NC}"
     echo ""
 
     local choice=""
-    while [ "$choice" != "1" ] && [ "$choice" != "4" ]; do
-        read -p "👉 Enter choice (1 or 4): " choice
+    while [ "$choice" != "1" ] && [ "$choice" != "2" ]; do
+        read -p "👉 Enter choice (1 or 2): " choice
         choice=$(echo "$choice" | tr -d '[:space:]')
     done
 
@@ -2702,8 +2715,8 @@ ${CYAN}============================================${NC}"
             CONFIG_FILE="config-${MODE}.yaml"
             deploy_paqet "$CONFIG_FILE"
             ;;
-        4)
-            manage_tunnels_menu
+        2)
+            show_management_menu
             ;;
     esac
 }
@@ -2724,7 +2737,7 @@ show_management_menu() {
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}1)${NC} 📊 List/Status of all tunnels                         ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} ▶️  Start all tunnels                                 ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}3)${NC} ⏹️  Stop all tunnels                                  ${MAGENTA}${DIM}│${NC}"
-        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}4)${NC} 🔄 Restart all tunnels                                ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} 🔄 Restart all tunnels                                ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}5)${NC} ${ICON_LOGS} Monitor all tunnels (live logs)                ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}6)${NC} 🗑️  Remove a tunnel                                   ${MAGENTA}${DIM}│${NC}"
         echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}7)${NC} ⚙️  Options (Edit tunnel settings)                    ${MAGENTA}${DIM}│${NC}"
@@ -2789,7 +2802,7 @@ show_optimization_menu() {
         echo -e "  ${WHITE}1)${NC} Apply kernel optimizations"
         echo -e "  ${WHITE}2)${NC} Remove optimizations (restore defaults)"
         echo -e "  ${WHITE}3)${NC} View current settings"
-        echo -e "  ${WHITE}4)${NC} Back"
+        echo -e "  ${WHITE}2)${NC} Back"
         echo ""
         
         local choice=""
@@ -2941,7 +2954,7 @@ show_tunnel_options() {
         echo -e "  ${WHITE}1)${NC} Change MTU"
         echo -e "  ${WHITE}2)${NC} Change KCP Mode"
         echo -e "  ${WHITE}3)${NC} Change Connection Count"
-        echo -e "  ${WHITE}4)${NC} Change Port"
+        echo -e "  ${WHITE}2)${NC} Change Port"
         echo -e "  ${WHITE}5)${NC} View full config"
         echo -e "  ${WHITE}6)${NC} Back"
         echo ""
@@ -2993,7 +3006,7 @@ edit_kcp_mode() {
     echo -e "  ${WHITE}1)${NC} fast (Recommended)"
     echo -e "  ${WHITE}2)${NC} fast2 (More aggressive)"
     echo -e "  ${WHITE}3)${NC} fast3 (Most aggressive - very high bandwidth usage)"
-    echo -e "  ${WHITE}4)${NC} normal (Conservative)"
+    echo -e "  ${WHITE}2)${NC} normal (Conservative)"
     echo -e "  ${WHITE}5)${NC} Cancel"
     echo ""
     read -p "Choose new mode (1-5): " choice
@@ -3143,7 +3156,7 @@ show_reports_menu() {
         echo -e "  ${WHITE}1)${NC} View recent errors (all tunnels)"
         echo -e "  ${WHITE}2)${NC} View errors for specific tunnel"
         echo -e "  ${WHITE}3)${NC} View last 50 log lines (all tunnels)"
-        echo -e "  ${WHITE}4)${NC} View last 100 log lines (specific tunnel)"
+        echo -e "  ${WHITE}2)${NC} View last 100 log lines (specific tunnel)"
         echo -e "  ${WHITE}5)${NC} Check service status (detailed)"
         echo -e "  ${WHITE}6)${NC} Export logs to file"
         echo -e "  ${WHITE}7)${NC} Back to management menu"
