@@ -1,12 +1,13 @@
 #!/bin/bash
 
-# Paqet Direct Tunnel Deployment Script for Linux
-# Configures paqet for direct tunnel between Iran (client) and Outside Iran (server)
-# Supports multiple tunnels (multiple servers from 1 client, or multiple clients to 1 server)
-# Usage: sudo ./deploy.sh
-# The script will ask you if you're setting up a client or server
+# DELTA VPN - Paqet Tunnel Installer
+# v1.0
+# Created by DELTA VPN
+# Telegram: t.me/delta_vpn1
 
-# Color codes
+set -euo pipefail
+
+# Colors (ANSI)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -16,25 +17,24 @@ MAGENTA='\033[0;35m'
 WHITE='\033[1;37m'
 DIM='\033[2m'
 BOLD='\033[1m'
-NC='\033[
+NC='\033[0m'  # No Color
 
 # DELTA Banner (branding)
 show_delta_banner() {
-    clear 2>/dev/null || true
-    echo -e "${MAGENTA}${BOLD}"
-    echo "██████╗ ███████╗██╗  ████████╗ █████╗ "
-    echo "██╔══██╗██╔════╝██║  ╚══██╔══╝██╔══██╗"
-    echo "██║  ██║█████╗  ██║     ██║   ███████║"
-    echo "██║  ██║██╔══╝  ██║     ██║   ██╔══██║"
-    echo "██████╔╝███████╗███████╗██║   ██║  ██║"
-    echo "╚═════╝ ╚══════╝╚══════╝╚═╝   ╚═╝  ╚═╝"
-    echo -e "${NC}"
-    echo -e "${WHITE}v1.0${NC}"
-    echo -e "${CYAN}Created by DELTA VPN${NC}"
-    echo -e "${BLUE}Telegram: t.me/delta_vpn1${NC}"
-    echo ""
+  clear 2>/dev/null || true
+  echo -e "${MAGENTA}${BOLD}"
+  echo "██████╗ ███████╗██╗  ████████╗ █████╗ "
+  echo "██╔══██╗██╔════╝██║  ╚══██╔══╝██╔══██╗"
+  echo "██║  ██║█████╗  ██║     ██║   ███████║"
+  echo "██║  ██║██╔══╝  ██║     ██║   ██╔══██║"
+  echo "██████╔╝███████╗███████╗██║   ██║  ██║"
+  echo "╚═════╝ ╚══════╝╚══════╝╚═╝   ╚═╝  ╚═╝"
+  echo -e "${NC}"
+  echo -e "${WHITE}v1.0${NC}"
+  echo -e "${CYAN}Created by DELTA VPN${NC}"
+  echo -e "${BLUE}Telegram: t.me/delta_vpn1${NC}"
+  echo ""
 }
-0m' # No Color
 
 # UI glyphs / emojis
 ICON_OK="✅"
@@ -2339,9 +2339,7 @@ get_multi_client_input() {
     fi
     
     echo -e "\n${YELLOW}MTU Configuration:${NC}"
-    echo -e "  Default: 1350 (Recommended for most networks)"
-    echo -e "  Lower values (1200-1300) may help with unstable connections"
-    step "Set MTU"
+step "Set MTU"
         read -p "Enter MTU value (default: 1150): " response
     if [ -n "$response" ]; then
         MTU=$(echo "$response" | tr -d '[:space:]')
@@ -2373,8 +2371,8 @@ get_multi_client_input() {
         TUNNEL_SERVERS+=("$server_addr")
         
         # Get server port
-        local server_port="9999"
-        read -p "Enter SERVER port (default: 9999): " response
+        local server_port="7777"
+        read -p "Enter SERVER port (default: 7777): " response
         if [ -n "$response" ]; then
             local normalized
             normalized=$(normalize_port "$response")
@@ -2382,7 +2380,7 @@ get_multi_client_input() {
                 server_port="$normalized"
             else
                 print_warning "Invalid port input, using default: 7777"
-                server_port="9999"
+                server_port="7777"
             fi
         fi
         TUNNEL_PORTS+=("$server_port")
@@ -2483,9 +2481,7 @@ get_multi_server_input() {
     fi
     
     echo -e "\n${YELLOW}MTU Configuration:${NC}"
-    echo -e "  Default: 1350 (Recommended for most networks)"
-    echo -e "  Lower values (1200-1300) may help with unstable connections"
-    step "Set MTU"
+step "Set MTU"
         read -p "Enter MTU value (default: 1150): " response
     if [ -n "$response" ]; then
         MTU=$(echo "$response" | tr -d '[:space:]')
@@ -2510,7 +2506,7 @@ get_multi_server_input() {
         
         # Get server port (each client tunnel needs different port)
         local server_port=""
-        local default_port=$((9999 + tunnel_count - 1))
+        local default_port=$((7777 + tunnel_count - 1))
         read -p "Enter port to listen on for '$tunnel_name' (default: $default_port): " server_port
         if [ -z "$server_port" ]; then
             server_port="$default_port"
