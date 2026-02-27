@@ -609,6 +609,7 @@ generate_encryption_key() {
     fi
 
     
+step "Encryption key"
 echo -e "\n${YELLOW}Encryption Key:${NC}"
 
 # Generate a 16-letter key (A-Z/a-z only)
@@ -835,35 +836,22 @@ apply_paqet_tuning() {
             continue
         fi
 
-        # ---- Bandwidth + stability defaults (safe edits) ----
-        # Reduce parallel connections (biggest bandwidth overhead)
+        # Minimal safe tuning:
+        # - Do NOT force mode/buffers (can change latency/speed unexpectedly)
+        # - Only cap very high parallel connections to reduce overhead bursts
         if grep -qE '^[[:space:]]*conn:[[:space:]]*[0-9]+' "$config"; then
-            sed -i -E 's/^([[:space:]]*conn:)[[:space:]]*[0-9]+/\1 2/' "$config"
+            local cur_conn
+            cur_conn=$(grep -E '^[[:space:]]*conn:' "$config" | head -1 | awk '{print $2}')
+            if [[ "$cur_conn" =~ ^[0-9]+$ ]] && [ "$cur_conn" -gt 6 ]; then
+                sed -i -E 's/^([[:space:]]*conn:)[[:space:]]*[0-9]+/\1 6/' "$config"
+            fi
         fi
-
-        # Prefer "fast" for stability (fast2/fast3 can be more aggressive)
-        if grep -qE '^[[:space:]]*mode:[[:space:]]*"' "$config"; then
-            sed -i -E 's/^([[:space:]]*mode:)[[:space:]]*".*"/\1 "fast"/' "$config"
-        fi
-
-        # Window sizes: server a bit higher than client
-        if [ "$role" = "server" ]; then
-            sed -i -E 's/^([[:space:]]*rcvwnd:)[[:space:]]*[0-9]+/\1 2048/' "$config" 2>/dev/null || true
-            sed -i -E 's/^([[:space:]]*sndwnd:)[[:space:]]*[0-9]+/\1 2048/' "$config" 2>/dev/null || true
-        else
-            sed -i -E 's/^([[:space:]]*rcvwnd:)[[:space:]]*[0-9]+/\1 1024/' "$config" 2>/dev/null || true
-            sed -i -E 's/^([[:space:]]*sndwnd:)[[:space:]]*[0-9]+/\1 1024/' "$config" 2>/dev/null || true
-        fi
-
-        # Buffers: keep moderate to avoid bursts/overhead
-        sed -i -E 's/^([[:space:]]*smuxbuf:)[[:space:]]*[0-9]+/\1 2097152/' "$config" 2>/dev/null || true
-        sed -i -E 's/^([[:space:]]*streambuf:)[[:space:]]*[0-9]+/\1 1048576/' "$config" 2>/dev/null || true
 
         tuned=$((tuned+1))
     done
 
     if [ "$tuned" -gt 0 ]; then
-        print_success "Applied tuning to $tuned tunnel config(s)"
+        print_success "Checked $tuned tunnel config(s) (no aggressive tuning applied)"
     else
         print_info "No tunnel configs found to tune"
     fi
@@ -924,7 +912,6 @@ update_paqet_core() {
 
     if download_paqet_binary "true"; then
         # Apply tuning changes without reinstall (reduces overhead + improves stability)
-        apply_paqet_tuning "$role_filter"
 
         # Restart only relevant tunnels (or all if unknown)
         restart_tunnels_by_role "$role_filter"
@@ -2270,10 +2257,8 @@ ${GREEN}Mode: ${MODE^^}${NC}"
             FORWARD_TARGET_HOST="$SERVER_ADDRESS"
             
             echo -e "\n${YELLOW}Port Forwarding Configuration:${NC}"
-            echo -e "  Format: local_port=target_port (e.g., 443=443, 8443=8080)"
-            echo -e "  You can enter multiple ports separated by comma"
-            echo -e "  All ports will forward to the Kharej server IP"
-            echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PORT}) on the same host.${NC}\n"
+echo -e "  You can enter multiple ports separated by comma"
+echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PORT}) on the same host.${NC}\n"
             
             while [ -z "$FORWARD_PORTS" ]; do
                 read -p "Enter port mappings (e.g., 443=443, 8443=8080): " FORWARD_PORTS
@@ -2353,6 +2338,7 @@ ${GREEN}Mode: ${MODE^^}${NC}"
         echo -e "  ${GREEN}MTU: $MTU${NC}"
 
         # Get encryption key
+        step "Encryption key"
         echo -e "\n${YELLOW}Encryption Key:${NC}"
         echo -e "  You need the encryption key from the Kharej server."
         read -p "Enter encryption key (or press Enter to generate new): " response
@@ -2549,8 +2535,7 @@ step "Set MTU"
         
         # Get port forwarding
         echo -e "\n${YELLOW}Port Forwarding for '$tunnel_name':${NC}"
-        echo -e "  Format: local_port=target_port (e.g., 443=443, 8443=8080)"
-        local forward_ports=""
+local forward_ports=""
         while [ -z "$forward_ports" ]; do
             read -p "Enter port mappings: " forward_ports
             forward_ports=$(echo "$forward_ports" | tr -d '[:space:]')
@@ -3211,21 +3196,40 @@ show_tunnel_options() {
         echo -e "  ${WHITE}1)${NC} Change MTU"
         echo -e "  ${WHITE}2)${NC} Change KCP Mode"
         echo -e "  ${WHITE}3)${NC} Change Connection Count"
-        echo -e "  ${WHITE}2)${NC} Change Port"
-        echo -e "  ${WHITE}5)${NC} View full config"
-        echo -e "  ${WHITE}6)${NC} Back"
+        echo -e "  ${WHITE}4)${NC} Change Port"
+        if grep -q 'role:[[:space:]]*"client"' "$SELECTED_CONFIG" && grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
+            echo -e "  ${WHITE}5)${NC} Change Port Mappings (Iran only)"
+            echo -e "  ${WHITE}6)${NC} View full config"
+            echo -e "  ${WHITE}7)${NC} Back"
+        else
+            echo -e "  ${WHITE}5)${NC} View full config"
+            echo -e "  ${WHITE}6)${NC} Back"
+        fi
         echo ""
         
         local choice=""
-        read -p "Enter choice (1-6): " choice
+        read -p "Enter choice (1-7): " choice
         
         case "$choice" in
             1) edit_mtu ;;
             2) edit_kcp_mode ;;
             3) edit_conn_count ;;
             4) edit_port ;;
-            5) view_config ;;
-            6) return ;;
+            5)
+                if grep -q 'role:[[:space:]]*"client"' "$SELECTED_CONFIG" && grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
+                    edit_port_mappings
+                else
+                    view_config
+                fi
+                ;;
+            6)
+                if grep -q 'role:[[:space:]]*"client"' "$SELECTED_CONFIG" && grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
+                    view_config
+                else
+                    return
+                fi
+                ;;
+            7) return ;;
             *) ;;
         esac
     done
@@ -3263,7 +3267,7 @@ edit_kcp_mode() {
     echo -e "  ${WHITE}1)${NC} fast (Recommended)"
     echo -e "  ${WHITE}2)${NC} fast2 (More aggressive)"
     echo -e "  ${WHITE}3)${NC} fast3 (Most aggressive - very high bandwidth usage)"
-    echo -e "  ${WHITE}2)${NC} normal (Conservative)"
+    echo -e "  ${WHITE}4)${NC} normal (Conservative)"
     echo -e "  ${WHITE}5)${NC} Cancel"
     echo ""
     read -p "Choose new mode (1-5): " choice
@@ -3354,6 +3358,95 @@ edit_port() {
     else
         print_error "Invalid port (must be 1-65535)"
     fi
+}
+
+# Edit port mappings (Iran client only - forward mode)
+edit_port_mappings() {
+    echo ""
+    echo -e "${YELLOW}Change Port Mappings (Forward Rules)${NC}"
+    echo ""
+
+    if ! grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
+        print_error "This tunnel has no port forwarding rules in config."
+        return
+    fi
+
+    # Extract target host from first existing forward rule (target: "host:port")
+    local target_host
+    target_host=$(awk '
+        $1=="target:" {
+            gsub(/"/,"",$2);
+            split($2,a,":");
+            print a[1];
+            exit
+        }' "$SELECTED_CONFIG" 2>/dev/null || true)
+
+    if [ -z "$target_host" ]; then
+        print_warning "Could not detect target host from config. Using 127.0.0.1"
+        target_host="127.0.0.1"
+    fi
+
+    local new_ports=""
+    read -p "Enter port mappings (e.g., 443=443, 8443=8080): " new_ports
+    new_ports=$(echo "$new_ports" | tr -d '[:space:]')
+
+    if [ -z "$new_ports" ]; then
+        print_warning "No input provided. Cancelled."
+        return
+    fi
+
+    # Build a fresh forward block
+    local tmpf
+    tmpf=$(mktemp)
+    {
+        echo "forward:"
+        IFS=',' read -ra pairs <<< "$new_ports"
+        for p in "${pairs[@]}"; do
+            local lp tp
+            lp=$(echo "$p" | cut -d'=' -f1)
+            tp=$(echo "$p" | cut -d'=' -f2)
+            if [[ "$lp" =~ ^[0-9]+$ ]] && [[ "$tp" =~ ^[0-9]+$ ]]; then
+                echo "  - listen: ":$lp""
+                echo "    target: "${target_host}:$tp""
+                echo "    protocol: "tcp""
+            fi
+        done
+    } > "$tmpf"
+
+    # Replace existing forward block in YAML (from 'forward:' until next top-level key)
+    # This awk keeps everything except the old forward block, then injects the new one.
+    local out
+    out=$(mktemp)
+    awk -v newblock_file="$tmpf" '
+        function print_newblock() {
+            while ((getline line < newblock_file) > 0) print line
+            close(newblock_file)
+        }
+        BEGIN { in_forward=0; printed=0 }
+        /^[^[:space:]].*:/ {
+            if (in_forward==1 && printed==0) { print_newblock(); printed=1; in_forward=0 }
+        }
+        /^[[:space:]]*forward:[[:space:]]*$/ { in_forward=1; next }
+        in_forward==1 {
+            # skip old forward list items (indented)
+            if ($0 ~ /^[[:space:]]{2,}-[[:space:]]/ || $0 ~ /^[[:space:]]{4,}/) next
+            # if we see a blank line while in_forward, keep skipping
+            if ($0 ~ /^[[:space:]]*$/) next
+        }
+        { 
+            if (in_forward==0) print $0
+        }
+        END {
+            if (in_forward==1 && printed==0) { print_newblock() }
+        }
+    ' "$SELECTED_CONFIG" > "$out"
+
+    mv "$out" "$SELECTED_CONFIG"
+    rm -f "$tmpf"
+    chmod 600 "$SELECTED_CONFIG"
+
+    print_success "Port mappings updated."
+    restart_tunnel_after_edit
 }
 
 # View full config
