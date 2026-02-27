@@ -1,3 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Colors
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BLUE='\033[0;34m'; MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'; NC='\033[0m'; BOLD='\033[1m'
+
 
 # ===== Paqet-X style install (wizard) =====
 PAQETX_CONFIG_DIR="/etc/paqet-x"
@@ -165,9 +173,10 @@ install_server_paqetx_style() {
 
     # [1/8] Service Name
     local tunnel_name=""
-    read -p "[1/8] Service Name (e.g: myserver) : " tunnel_name </dev/tty
+    echo -en "${MAGENTA}${BOLD}[1/8] Service Name (e.g: myserver) : ${NC} "
+    read -r tunnel_name </dev/tty
     tunnel_name=$(echo "${tunnel_name:-server}" | tr -cd '[:alnum:]-_' | tr '[:upper:]' '[:lower:]')
-    echo "[1/8] Service Name : $tunnel_name"
+    echo -e "${MAGENTA}${BOLD}[1/8] Service Name :${NC} ${CYAN}${BOLD}${tunnel_name}${NC}"
 
     mkdir -p "$PAQETX_CONFIG_DIR" 2>/dev/null || true
     local cfg="${PAQETX_CONFIG_DIR}/${tunnel_name}.yaml"
@@ -182,37 +191,41 @@ install_server_paqetx_style() {
 
     # [2/8] Listen port
     local port=""
-    read -p "[2/8] Listen Port (default: ${PAQETX_DEFAULT_LISTEN_PORT}) : " port </dev/tty
+    echo -en "${MAGENTA}${BOLD}[2/8] Listen Port (default: ${PAQETX_DEFAULT_LISTEN_PORT}) : ${NC} "
+    read -r port </dev/tty
     port="${port:-$PAQETX_DEFAULT_LISTEN_PORT}"
     SERVER_PORT="$port"
-    echo "[2/8] Listen Port : $SERVER_PORT"
+    echo -e "${MAGENTA}${BOLD}[2/8] Listen Port :${NC} ${CYAN}${BOLD}${SERVER_PORT}${NC}"
 
     # [3/8] Secret key
     local secret_key
     secret_key="$(paqetx_generate_secret_key)"
-    echo "[3/8] Secret Key : ${secret_key} (press Enter for auto-generate)"
+    echo -e "${MAGENTA}${BOLD}[3/8] Secret Key :${NC} ${GREEN}${BOLD}${secret_key}${NC} ${MAGENTA}(press Enter for auto-generate)${NC}"
     local custom_key=""
-    read -p "Custom key? (Enter=use above): " custom_key </dev/tty
+    echo -en "${MAGENTA}${BOLD}Custom key? (Enter=use above):${NC} "
+    read -r custom_key </dev/tty
     if [ -n "$custom_key" ]; then
         secret_key="$custom_key"
     fi
     ENCRYPTION_KEY="$secret_key"
-    echo "[3/8] Secret Key : $ENCRYPTION_KEY"
+    echo -e "${MAGENTA}${BOLD}[3/8] Secret Key :${NC} ${CYAN}${BOLD}${ENCRYPTION_KEY}${NC}"
 
     # [4/8] KCP mode
     paqetx_select_kcp_mode "4/8"
 
     # [5/8] connections
     local conn=""
-    read -p "[5/8] Connections [1-32] (default ${PAQETX_DEFAULT_CONNECTIONS}): " conn </dev/tty
+    echo -en "${MAGENTA}${BOLD}[5/8] Connections [1-32] (default ${PAQETX_DEFAULT_CONNECTIONS}): ${NC} "
+    read -r conn </dev/tty
     CONN_COUNT="${conn:-$PAQETX_DEFAULT_CONNECTIONS}"
-    echo "[5/8] Connections : $CONN_COUNT"
+    echo -e "${MAGENTA}${BOLD}[5/8] Connections :${NC} ${CYAN}${BOLD}${CONN_COUNT}${NC}"
 
     # [6/8] MTU
     local mtu=""
-    read -p "[6/8] MTU (default ${PAQETX_DEFAULT_MTU}): " mtu </dev/tty
+    echo -en "${MAGENTA}${BOLD}[6/8] MTU (default ${PAQETX_DEFAULT_MTU}): ${NC} "
+    read -r mtu </dev/tty
     MTU="${mtu:-$PAQETX_DEFAULT_MTU}"
-    echo "[6/8] MTU : $MTU"
+    echo -e "${MAGENTA}${BOLD}[6/8] MTU :${NC} ${CYAN}${BOLD}${MTU}${NC}"
 
     # [7/8] Encryption
     paqetx_select_encryption "7/8"
@@ -287,9 +300,10 @@ install_client_paqetx_style() {
 
     # [1/11] Service Name
     local tunnel_name=""
-    read -p "[1/11] Service Name (e.g: myclient) : " tunnel_name </dev/tty
+    echo -en "${MAGENTA}${BOLD}[1/11] Service Name (e.g: myclient) : ${NC} "
+    read -r tunnel_name </dev/tty
     tunnel_name=$(echo "${tunnel_name:-client}" | tr -cd '[:alnum:]-_' | tr '[:upper:]' '[:lower:]')
-    echo "[1/11] Service Name : $tunnel_name"
+    echo -e "${MAGENTA}${BOLD}[1/11] Service Name :${NC} ${CYAN}${BOLD}${tunnel_name}${NC}"
 
     mkdir -p "$PAQETX_CONFIG_DIR" 2>/dev/null || true
     local cfg="${PAQETX_CONFIG_DIR}/${tunnel_name}.yaml"
@@ -306,34 +320,37 @@ install_client_paqetx_style() {
     local server_ip=""
     step_prompt "2/11" "Server IP (Kharej e.g: 45.76.123.89) :" server_ip
     SERVER_ADDRESS="$(echo "$server_ip" | tr -d '[:space:]')"
-    echo "[2/11] Server IP : $SERVER_ADDRESS"
+    echo -e "${MAGENTA}${BOLD}[2/11] Server IP :${NC} ${CYAN}${BOLD}${SERVER_ADDRESS}${NC}"
 
     # [3/11] Server Port
     local server_port=""
-    read -p "[3/11] Server Port (default: ${PAQETX_DEFAULT_LISTEN_PORT}) : " server_port </dev/tty
+    echo -en "${MAGENTA}${BOLD}[3/11] Server Port (default: ${PAQETX_DEFAULT_LISTEN_PORT}) : ${NC} "
+    read -r server_port </dev/tty
     SERVER_PORT="${server_port:-$PAQETX_DEFAULT_LISTEN_PORT}"
-    echo "[3/11] Server Port : $SERVER_PORT"
+    echo -e "${MAGENTA}${BOLD}[3/11] Server Port :${NC} ${CYAN}${BOLD}${SERVER_PORT}${NC}"
 
     # [4/11] Secret Key
     local secret_key=""
     step_prompt "4/11" "Secret Key (from server) :" secret_key
     ENCRYPTION_KEY="$secret_key"
-    echo "[4/11] Secret Key : $ENCRYPTION_KEY"
+    echo -e "${MAGENTA}${BOLD}[4/11] Secret Key :${NC} ${CYAN}${BOLD}${ENCRYPTION_KEY}${NC}"
 
     # [5/11] KCP mode
     paqetx_select_kcp_mode "5/11"
 
     # [6/11] connections
     local conn=""
-    read -p "[6/11] Connections [1-32] (default ${PAQETX_DEFAULT_CONNECTIONS}): " conn </dev/tty
+    echo -en "${MAGENTA}${BOLD}[6/11] Connections [1-32] (default ${PAQETX_DEFAULT_CONNECTIONS}): ${NC} "
+    read -r conn </dev/tty
     CONN_COUNT="${conn:-$PAQETX_DEFAULT_CONNECTIONS}"
-    echo "[6/11] Connections : $CONN_COUNT"
+    echo -e "${MAGENTA}${BOLD}[6/11] Connections :${NC} ${CYAN}${BOLD}${CONN_COUNT}${NC}"
 
     # [7/11] MTU
     local mtu=""
-    read -p "[7/11] MTU (default ${PAQETX_DEFAULT_MTU}): " mtu </dev/tty
+    echo -en "${MAGENTA}${BOLD}[7/11] MTU (default ${PAQETX_DEFAULT_MTU}): ${NC} "
+    read -r mtu </dev/tty
     MTU="${mtu:-$PAQETX_DEFAULT_MTU}"
-    echo "[7/11] MTU : $MTU"
+    echo -e "${MAGENTA}${BOLD}[7/11] MTU :${NC} ${CYAN}${BOLD}${MTU}${NC}"
 
     # [8/11] Encryption
     paqetx_select_encryption "8/11"
@@ -349,7 +366,8 @@ install_client_paqetx_style() {
     echo " [2] SOCKS5 Proxy - Create a SOCKS5 proxy"
     echo ""
     local traffic_type=""
-    read -p "[10/11] Choose traffic type [1-2] (default 1): " traffic_type </dev/tty
+    echo -en "${MAGENTA}${BOLD}[10/11] Choose traffic type [1-2] (default 1): ${NC} "
+    read -r traffic_type </dev/tty
     traffic_type="${traffic_type:-1}"
 
     PROXY_TYPE="forward"
@@ -364,7 +382,8 @@ install_client_paqetx_style() {
         echo "Port Forwarding Configuration"
         echo "────────────────────────────────────────────────────────────────"
         local forward_ports=""
-        read -p "[11/11] Forward Ports (comma separated) [default ${PAQETX_DEFAULT_FORWARD_PORTS}]: " forward_ports </dev/tty
+        echo -en "${MAGENTA}${BOLD}[11/11] Forward Ports (comma separated) [default ${PAQETX_DEFAULT_FORWARD_PORTS}]: ${NC} "
+    read -r forward_ports </dev/tty
         forward_ports="${forward_ports:-$PAQETX_DEFAULT_FORWARD_PORTS}"
         forward_ports=$(echo "$forward_ports" | tr -d ' ')
         echo ""
@@ -443,7 +462,6 @@ install_client_paqetx_style() {
 }
 # ===== end Paqet-X style install =====
 
-#!/bin/bash
 
 # DELTA VPN - Paqet Tunnel Installer
 # v1.0
@@ -1973,7 +1991,6 @@ create_startup_script() {
     fi
     
     cat > "$script_path" << EOF
-#!/bin/bash
 # Paqet Startup Script
 
 if [[ \$EUID -ne 0 ]]; then
