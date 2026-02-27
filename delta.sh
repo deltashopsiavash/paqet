@@ -103,27 +103,35 @@ paqetx_select_kcp_mode() {
 
 paqetx_kcp_tuning_server() {
     echo ""
-    echo "KCP Tuning"
-    echo "────────────────────────────────────────────────────────────────"
+    step_info "KCP Tuning"
     local val=""
-    read -p "  rcvwnd (default 1024): " val </dev/tty; KCP_RCVWND="${val:-1024}"
-    read -p "  sndwnd (default 1024): " val </dev/tty; KCP_SNDWND="${val:-1024}"
-    read -p "  smuxbuf (default 4194304): " val </dev/tty; KCP_SMUXBUF="${val:-4194304}"
-    read -p "  streambuf (default 2097152): " val </dev/tty; KCP_STREAMBUF="${val:-2097152}"
-    read -p "  sockbuf (default 8388608): " val </dev/tty; KCP_SOCKBUF="${val:-8388608}"
+    printf "%b" "${BOLD}${MAGENTA}  rcvwnd (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_RCVWND="${val:-1024}"
+    printf "%b" "${BOLD}${MAGENTA}  sndwnd (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_SNDWND="${val:-1024}"
+    printf "%b" "${BOLD}${MAGENTA}  smuxbuf (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_SMUXBUF="${val:-4194304}"
+    printf "%b" "${BOLD}${MAGENTA}  streambuf (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_STREAMBUF="${val:-2097152}"
+    printf "%b" "${BOLD}${MAGENTA}  sockbuf (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_SOCKBUF="${val:-8388608}"
     echo "[8/8] rcvwnd=${KCP_RCVWND} sndwnd=${KCP_SNDWND} sockbuf=${KCP_SOCKBUF}"
 }
 
 paqetx_kcp_tuning_client() {
     echo ""
-    echo "KCP Tuning"
-    echo "────────────────────────────────────────────────────────────────"
+    step_info "KCP Tuning"
     local val=""
-    read -p "  rcvwnd (default 512): " val </dev/tty; KCP_RCVWND="${val:-512}"
-    read -p "  sndwnd (default 512): " val </dev/tty; KCP_SNDWND="${val:-512}"
-    read -p "  smuxbuf (default 4194304): " val </dev/tty; KCP_SMUXBUF="${val:-4194304}"
-    read -p "  streambuf (default 2097152): " val </dev/tty; KCP_STREAMBUF="${val:-2097152}"
-    read -p "  sockbuf (default 4194304): " val </dev/tty; KCP_SOCKBUF="${val:-4194304}"
+    printf "%b" "${BOLD}${MAGENTA}  rcvwnd (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_RCVWND="${val:-512}"
+    printf "%b" "${BOLD}${MAGENTA}  sndwnd (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_SNDWND="${val:-512}"
+    printf "%b" "${BOLD}${MAGENTA}  smuxbuf (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_SMUXBUF="${val:-4194304}"
+    printf "%b" "${BOLD}${MAGENTA}  streambuf (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_STREAMBUF="${val:-2097152}"
+    printf "%b" "${BOLD}${MAGENTA}  sockbuf (default \1):${NC} "
+    IFS= read -r val </dev/tty || true; KCP_SOCKBUF="${val:-4194304}"
     echo "[9/11] rcvwnd=${KCP_RCVWND} sndwnd=${KCP_SNDWND} sockbuf=${KCP_SOCKBUF}"
 }
 
@@ -153,8 +161,7 @@ install_server_paqetx_style() {
     printf "│ %-12s : %-44s │\n" "Gateway MAC" "${GATEWAY_MAC:-Not found}"
     echo "└──────────────────────────────────────────────────────────────┘"
     echo ""
-    echo "Server Configuration"
-    echo "────────────────────────────────────────────────────────────────"
+    step_info "Server Configuration"
 
     # [1/8] Service Name
     local tunnel_name=""
@@ -214,8 +221,7 @@ install_server_paqetx_style() {
     paqetx_kcp_tuning_server
 
     echo ""
-    echo "Applying Configuration"
-    echo "────────────────────────────────────────────────────────────────"
+    step_info "Applying Configuration"
 
     # Ensure deps + binary
     install_dependencies
@@ -277,8 +283,7 @@ install_client_paqetx_style() {
     printf "│ %-12s : %-44s │\n" "Gateway MAC" "${GATEWAY_MAC:-Not found}"
     echo "└──────────────────────────────────────────────────────────────┘"
     echo ""
-    echo "Client Configuration"
-    echo "────────────────────────────────────────────────────────────────"
+    step_info "Client Configuration"
 
     # [1/11] Service Name
     local tunnel_name=""
@@ -299,7 +304,7 @@ install_client_paqetx_style() {
 
     # [2/11] Server IP
     local server_ip=""
-    read -p "[2/11] Server IP (Kharej e.g: 45.76.123.89) : " server_ip </dev/tty
+    step_prompt "2/11" "Server IP (Kharej e.g: 45.76.123.89) :" server_ip
     SERVER_ADDRESS="$(echo "$server_ip" | tr -d '[:space:]')"
     echo "[2/11] Server IP : $SERVER_ADDRESS"
 
@@ -311,7 +316,7 @@ install_client_paqetx_style() {
 
     # [4/11] Secret Key
     local secret_key=""
-    read -p "[4/11] Secret Key (from server) : " secret_key </dev/tty
+    step_prompt "4/11" "Secret Key (from server) :" secret_key
     ENCRYPTION_KEY="$secret_key"
     echo "[4/11] Secret Key : $ENCRYPTION_KEY"
 
@@ -371,7 +376,8 @@ install_client_paqetx_style() {
             p=$(echo "$p" | tr -d '[:space:]')
             [ -z "$p" ] && continue
             local proto_choice=""
-            read -p "Port $p → protocol [1-3] (default 1): " proto_choice </dev/tty
+            printf "%b" "${BOLD}${MAGENTA}Port ${p} → protocol [1-3] (default 1):${NC} "
+                IFS= read -r proto_choice </dev/tty || true
             proto_choice="${proto_choice:-1}"
             case "$proto_choice" in
                 2)
@@ -392,8 +398,7 @@ install_client_paqetx_style() {
     fi
 
     echo ""
-    echo "Applying Configuration"
-    echo "────────────────────────────────────────────────────────────────"
+    step_info "Applying Configuration"
 
     install_dependencies
     download_paqet_binary || return 1
@@ -458,6 +463,30 @@ WHITE='\033[1;37m'
 DIM='\033[2m'
 BOLD='\033[1m'
 NC='\033[0m'  # No Color
+
+# UI helpers
+step_prompt() { # step_prompt "1/8" "Service Name (e.g: myserver)" "varname" "default(optional)"
+    local step="$1" msg="$2" __var="$3" def="${4-}"
+    local input=""
+    # Print prompt in bold purple
+    printf "%b" "${BOLD}${MAGENTA}[${step}] ${msg}${NC} "
+    IFS= read -r input </dev/tty || true
+    if [ -z "${input}" ] && [ -n "${def}" ]; then input="${def}"; fi
+    # shellcheck disable=SC2140
+    eval "$__var=\"\$input\""
+}
+step_echo() { # step_echo "1/8" "Service Name" "value" [value_color]
+    local step="$1" label="$2" value="$3" vcolor="${4-${WHITE}}"
+    echo -e "${BOLD}${MAGENTA}[${step}]${NC} ${MAGENTA}${label}${NC} : ${BOLD}${vcolor}${value}${NC}"
+}
+step_info() { # step_info "Title"
+    echo -e "\n${CYAN}${BOLD}$1${NC}"
+    echo -e "${CYAN}────────────────────────────────────────────────────────────────${NC}"
+}
+opt_line() { # opt_line "1" "text" color
+    local n="$1" t="$2" c="${3-${WHITE}}"
+    echo -e " ${BOLD}${c}[${n}]${NC} ${t}"
+}
 
 # DELTA Banner (branding)
 
