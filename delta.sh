@@ -21,17 +21,16 @@ NC='\033[0m'  # No Color
 
 # DELTA Banner (branding)
 
-# Generate 16-letter encryption key (A-Z/a-z only)
-gen_alpha16() {
+# Generate 24-character secret key (A-Z/a-z/0-9) — Paqet-X style
+gen_secret24() {
     local k=""
     if command -v openssl >/dev/null 2>&1; then
-        k=$(openssl rand 64 | tr -dc 'A-Za-z' | head -c 16)
+        k=$(openssl rand 64 | tr -dc 'A-Za-z0-9' | head -c 24)
     else
-        k=$(dd if=/dev/urandom bs=64 count=1 2>/dev/null | tr -dc 'A-Za-z' | head -c 16)
+        k=$(dd if=/dev/urandom bs=64 count=1 2>/dev/null | tr -dc 'A-Za-z0-9' | head -c 24)
     fi
-    # very last fallback (should almost never happen)
-    if [ ${#k} -lt 16 ]; then
-        k=$(date +%s%N | tr -dc 'A-Za-z' | head -c 16)
+    if [ ${#k} -lt 24 ]; then
+        k=$(date +%s%N | tr -dc 'A-Za-z0-9' | head -c 24)
     fi
     echo "$k"
 }
@@ -52,6 +51,18 @@ show_delta_banner() {
   echo ""
 }
 
+
+# Technical defaults (Paqet-X style)
+DEFAULT_PORT="8888"
+DEFAULT_CONN="4"
+DEFAULT_MTU="1350"
+DEFAULT_KCP_MODE="fast"
+DEFAULT_ENCRYPTION_BLOCK="aes-128-gcm"
+# KCP windows (Paqet-X style)
+DEFAULT_SERVER_RCVWND="1024"
+DEFAULT_SERVER_SNDWND="1024"
+DEFAULT_CLIENT_RCVWND="512"
+DEFAULT_CLIENT_SNDWND="512"
 # UI glyphs / emojis
 ICON_OK="✅"
 ICON_ERR="❌"
@@ -111,15 +122,12 @@ print_info() {
 # KCP manual preset defaults (role-aware)
 set_kcp_defaults() {
     local role="$1"
-    # Tuned defaults for stability + lower bandwidth overhead
-    # - Slightly higher interval + lower resend reduces retransmit storms
-    # - Enable congestion control (nc=0) to avoid aggressive bandwidth spikes
     KCP_NODELAY=1
-    KCP_INTERVAL=20
-    KCP_RESEND=1
-    KCP_NC=0
-    KCP_SMUXBUF=2097152
-    KCP_STREAMBUF=1048576
+    KCP_INTERVAL=10
+    KCP_RESEND=2
+    KCP_NC=1
+    KCP_SMUXBUF=4194304
+    KCP_STREAMBUF=2097152
     if [ "$role" = "server" ]; then
         KCP_RCVWND=2048
         KCP_SNDWND=2048
@@ -609,11 +617,10 @@ generate_encryption_key() {
     fi
 
     
-step "Encryption key"
 echo -e "\n${YELLOW}Encryption Key:${NC}"
 
 # Generate a 16-letter key (A-Z/a-z only)
-ENCRYPTION_KEY="$(gen_alpha16)"
+ENCRYPTION_KEY="$(gen_secret24)"
 
 echo -e "\n${CYAN}============================================${NC}"
 echo -e "  ${BOLD}${YELLOW}IMPORTANT: COPY THIS ENCRYPTION KEY!${NC}"
@@ -812,139 +819,17 @@ restart_active_tunnels_after_update() {
 }
 
 # Force update paqet core binary to the latest release
-
-# Apply lightweight tuning to existing tunnel configs (no reinstall needed)
-# role_filter: "client" | "server" | "" (all)
-apply_paqet_tuning() {
-    local role_filter="${1:-}"
-    local tuned=0
-
-    for service_file in /etc/systemd/system/paqet-*.service; do
-        [ -f "$service_file" ] || continue
-        local config
-        config=$(resolve_service_config_path "$service_file")
-        [ -n "$config" ] || continue
-        [ -f "$config" ] || continue
-
-        local role=""
-        role=$(awk -F\" '/^role:/{print $2; exit}' "$config" 2>/dev/null || true)
-        if [ -z "$role" ]; then
-            role=$(grep -E '^role:' "$config" | head -1 | awk '{print $2}' | tr -d '"' 2>/dev/null || true)
-        fi
-
-        if [ -n "$role_filter" ] && [ "$role" != "$role_filter" ]; then
-            continue
-        fi
-
-        # Minimal safe tuning:
-        # - Do NOT force mode/buffers (can change latency/speed unexpectedly)
-        # - Only cap very high parallel connections to reduce overhead bursts
-        if grep -qE '^[[:space:]]*conn:[[:space:]]*[0-9]+' "$config"; then
-            local cur_conn
-            cur_conn=$(grep -E '^[[:space:]]*conn:' "$config" | head -1 | awk '{print $2}')
-            if [[ "$cur_conn" =~ ^[0-9]+$ ]] && [ "$cur_conn" -gt 6 ]; then
-                sed -i -E 's/^([[:space:]]*conn:)[[:space:]]*[0-9]+/\1 6/' "$config"
-            fi
-        fi
-
-        tuned=$((tuned+1))
-    done
-
-    if [ "$tuned" -gt 0 ]; then
-        print_success "Checked $tuned tunnel config(s) (no aggressive tuning applied)"
-    else
-        print_info "No tunnel configs found to tune"
-    fi
-}
-
-# Restart tunnels by role ("" means all)
-restart_tunnels_by_role() {
-    local role_filter="${1:-}"
-    local restarted=0
-
-    for service_file in /etc/systemd/system/paqet-*.service; do
-        [ -f "$service_file" ] || continue
-        local service_name
-        service_name=$(basename "$service_file" .service)
-
-        local config
-        config=$(resolve_service_config_path "$service_file")
-        if [ -n "$role_filter" ] && [ -n "$config" ] && [ -f "$config" ]; then
-            local role=""
-            role=$(awk -F\" '/^role:/{print $2; exit}' "$config" 2>/dev/null || true)
-            if [ -z "$role" ]; then
-                role=$(grep -E '^role:' "$config" | head -1 | awk '{print $2}' | tr -d '"' 2>/dev/null || true)
-            fi
-            [ "$role" = "$role_filter" ] || continue
-        elif [ -n "$role_filter" ]; then
-            continue
-        fi
-
-        if systemctl list-unit-files | grep -q "^${service_name}\.service"; then
-            print_info "Restarting $service_name..."
-            if systemctl restart "$service_name" 2>/dev/null; then
-                restarted=$((restarted+1))
-                print_success "$service_name restarted"
-            else
-                print_warning "Failed to restart $service_name"
-            fi
-        fi
-    done
-
-    if [ "$restarted" -eq 0 ]; then
-        print_info "No services restarted"
-    fi
-}
-
-# Force update paqet core binary to the latest release
-# Optional role hint: "iran" | "kharej" | "" (all). "iran" => client, "kharej" => server
 update_paqet_core() {
-    local where="${1:-}"
-    local role_filter=""
-    case "$(echo "$where" | tr '[:upper:]' '[:lower:]')" in
-        iran) role_filter="client" ;;
-        kharej) role_filter="server" ;;
-        *) role_filter="" ;;
-    esac
-
     print_header "Updating Paqet Core"
     check_root
 
     if download_paqet_binary "true"; then
-        # Apply tuning changes without reinstall (reduces overhead + improves stability)
-
-        # Restart only relevant tunnels (or all if unknown)
-        restart_tunnels_by_role "$role_filter"
-
+        restart_active_tunnels_after_update
         print_success "Paqet core update completed"
     else
         print_error "Paqet core update failed"
         return 1
     fi
-}
-
-# Update Paqet Core interactively (used from main menu)
-update_paqet_core_interactive() {
-    show_delta_banner
-    print_header "Update Paqet Core"
-
-    local loc=""
-    while [ "$loc" != "1" ] && [ "$loc" != "2" ] && [ "$loc" != "b" ] && [ "$loc" != "B" ]; do
-        echo -e "${YELLOW}This server is located in:${NC}"
-        echo -e "  ${GREEN}1) Iran${NC}"
-        echo -e "  ${CYAN}2) Kharej${NC}"
-        echo -e "  ${DIM}b) Back${NC}"
-        read -p "👉 Choose (1-2): " loc
-        loc=$(echo "$loc" | tr -d '[:space:]')
-    done
-
-    case "$loc" in
-        1) update_paqet_core "iran" ;;
-        2) update_paqet_core "kharej" ;;
-        *) return ;;
-    esac
-
-    read -p "Press Enter to continue..." _
 }
 
 # Create client configuration
@@ -955,7 +840,7 @@ create_client_config() {
     
     cat > "$config_file" << EOF
 # Paqet Client Configuration - Iran (Direct Tunnel)
-# This client connects to the Kharej server
+# This client connects to the Outside Iran server
 role: "client"
 
 # Logging configuration
@@ -1027,9 +912,9 @@ network:
   pcap:
     sockbuf: 4194304             # 4MB buffer for client
 
-# Server connection settings (Kharej server)
+# Server connection settings (Outside Iran server)
 server:
-  addr: "$SERVER_ADDRESS:$SERVER_PORT"  # Kharej paqet server address and port
+  addr: "$SERVER_ADDRESS:$SERVER_PORT"  # Outside Iran paqet server address and port
 
 # Transport protocol configuration
 transport:
@@ -1077,10 +962,10 @@ EOF
 create_server_config() {
     local config_file="$1"
     
-    print_header "Creating Server Configuration (Kharej - Direct Tunnel)"
+    print_header "Creating Server Configuration (Outside Iran - Direct Tunnel)"
     
     cat > "$config_file" << EOF
-# Paqet Server Configuration - Kharej (Direct Tunnel)
+# Paqet Server Configuration - Outside Iran (Direct Tunnel)
 # This server accepts connections from Iran client
 role: "server"
 
@@ -1462,8 +1347,6 @@ create_systemd_service() {
 [Unit]
 Description=Paqet Tunnel ($mode)
 After=network.target
-StartLimitIntervalSec=0
-StartLimitBurst=0
 Documentation=https://github.com/hanselime/paqet
 
 [Service]
@@ -1472,7 +1355,7 @@ User=root
 WorkingDirectory=$paqet_path
 ExecStart=$paqet_binary run -c $config_file
 Restart=always
-RestartSec=2
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=$service_name
@@ -2222,20 +2105,20 @@ ${GREEN}Mode: ${MODE^^}${NC}"
         # Get server address
         while [ -z "$SERVER_ADDRESS" ]; do
             step "Enter server IP address"
-            read -p "Enter Kharej SERVER IP address: " response
+            read -p "Enter Outside Iran SERVER IP address: " response
             SERVER_ADDRESS=$(echo "$response" | tr -d '[:space:]')
         done
         
         # Get server port
         step "Enter server port"
-        read -p "Enter SERVER port (press Enter for default: 7777): " response
+        read -p "Enter SERVER port (press Enter for default: 8888): " response
         if [ -n "$response" ]; then
             local normalized
             normalized=$(normalize_port "$response")
             if [ -n "$normalized" ]; then
                 SERVER_PORT="$normalized"
             else
-                print_warning "Invalid port input, using default: 7777"
+                print_warning "Invalid port input, using default: 8888"
                 SERVER_PORT="7777"
             fi
         fi
@@ -2257,8 +2140,10 @@ ${GREEN}Mode: ${MODE^^}${NC}"
             FORWARD_TARGET_HOST="$SERVER_ADDRESS"
             
             echo -e "\n${YELLOW}Port Forwarding Configuration:${NC}"
-echo -e "  You can enter multiple ports separated by comma"
-echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PORT}) on the same host.${NC}\n"
+            echo -e "  Format: local_port=target_port (e.g., 443=443, 8443=8080)"
+            echo -e "  You can enter multiple ports separated by comma"
+            echo -e "  All ports will forward to the Outside Iran server IP"
+            echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PORT}) on the same host.${NC}\n"
             
             while [ -z "$FORWARD_PORTS" ]; do
                 read -p "Enter port mappings (e.g., 443=443, 8443=8080): " FORWARD_PORTS
@@ -2277,7 +2162,7 @@ echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PO
                     if [ -n "$FORWARD_RULES" ]; then
                         FORWARD_RULES="${FORWARD_RULES};"
                     fi
-                    # Target host is Kharej server IP (traffic forwarded through tunnel to server)
+                    # Target host is Outside Iran server IP (traffic forwarded through tunnel to server)
                     FORWARD_RULES="${FORWARD_RULES}${local_port}:${SERVER_ADDRESS}:${target_port}"
                     echo -e "  ${GREEN}✓ Forward: :${local_port} -> ${SERVER_ADDRESS}:${target_port}${NC}"
                 fi
@@ -2292,7 +2177,7 @@ echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PO
         # Get KCP Configuration
         step "KCP connection tuning"
         echo -e "\n${YELLOW}KCP Configuration (Connection Tuning):${NC}"
-                read -p "Enter number of parallel connections (default: 6): " response
+                read -p "Enter number of parallel connections (default: 4): " response
         if [ -n "$response" ]; then
             CONN_COUNT=$(echo "$response" | tr -d '[:space:]')
         fi
@@ -2331,33 +2216,32 @@ echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PO
         # Get MTU
         echo -e "\n${YELLOW}MTU Configuration:${NC}"
         step "Set MTU"
-        read -p "Enter MTU value (default: 1150): " response
+        read -p "Enter MTU value (default: 1350): " response
         if [ -n "$response" ]; then
             MTU=$(echo "$response" | tr -d '[:space:]')
         fi
         echo -e "  ${GREEN}MTU: $MTU${NC}"
 
         # Get encryption key
-        step "Encryption key"
         echo -e "\n${YELLOW}Encryption Key:${NC}"
-        echo -e "  You need the encryption key from the Kharej server."
+        echo -e "  You need the encryption key from the Outside Iran server."
         read -p "Enter encryption key (or press Enter to generate new): " response
         if [ -n "$response" ]; then
             ENCRYPTION_KEY="$response"
         fi
     else
-        echo -e "\n${CYAN}[SERVER - Kharej Setup]${NC}"
+        echo -e "\n${CYAN}[SERVER - Outside Iran Setup]${NC}"
         step "Choose listening port"
         
         # Get server port
-        read -p "Enter port to listen on (press Enter for default: 7777): " response
+        read -p "Enter port to listen on (press Enter for default: 8888): " response
         if [ -n "$response" ]; then
             local normalized
             normalized=$(normalize_port "$response")
             if [ -n "$normalized" ]; then
                 SERVER_PORT="$normalized"
             else
-                print_warning "Invalid port input, using default: 7777"
+                print_warning "Invalid port input, using default: 8888"
                 SERVER_PORT="7777"
             fi
         fi
@@ -2365,7 +2249,7 @@ echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PO
         # Get KCP Configuration for server
         step "KCP connection tuning"
         echo -e "\n${YELLOW}KCP Configuration (Connection Tuning):${NC}"
-                read -p "Enter number of parallel connections (default: 6): " response
+                read -p "Enter number of parallel connections (default: 4): " response
         if [ -n "$response" ]; then
             CONN_COUNT=$(echo "$response" | tr -d '[:space:]')
         fi
@@ -2405,7 +2289,7 @@ echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PO
         # Get MTU for server
         echo -e "\n${YELLOW}MTU Configuration:${NC}"
         step "Set MTU"
-        read -p "Enter MTU value (default: 1150): " response
+        read -p "Enter MTU value (default: 1350): " response
         if [ -n "$response" ]; then
             MTU=$(echo "$response" | tr -d '[:space:]')
         fi
@@ -2444,12 +2328,12 @@ echo -e "  ${YELLOW}Do not map target_port to the paqet server port (${SERVER_PO
 # Collect input for multiple tunnels (client connecting to multiple servers)
 get_multi_client_input() {
     echo -e "\n${CYAN}[MULTI-SERVER CLIENT SETUP]${NC}"
-    echo -e "${YELLOW}You will connect this client to multiple Kharej servers.${NC}"
+    echo -e "${YELLOW}You will connect this client to multiple Outside Iran servers.${NC}"
     echo -e "${YELLOW}Each server will have its own tunnel and service.${NC}\n"
     
     # Get global KCP settings (shared across all tunnels)
     echo -e "${YELLOW}Global KCP Configuration (applies to all tunnels):${NC}"
-        read -p "Enter number of parallel connections (default: 6): " response
+        read -p "Enter number of parallel connections (default: 4): " response
     if [ -n "$response" ]; then
         CONN_COUNT=$(echo "$response" | tr -d '[:space:]')
     fi
@@ -2488,7 +2372,7 @@ get_multi_client_input() {
     
     echo -e "\n${YELLOW}MTU Configuration:${NC}"
 step "Set MTU"
-        read -p "Enter MTU value (default: 1150): " response
+        read -p "Enter MTU value (default: 1350): " response
     if [ -n "$response" ]; then
         MTU=$(echo "$response" | tr -d '[:space:]')
     fi
@@ -2519,23 +2403,24 @@ step "Set MTU"
         TUNNEL_SERVERS+=("$server_addr")
         
         # Get server port
-        local server_port="7777"
-        read -p "Enter SERVER port (default: 7777): " response
+        local server_port="8888"
+        read -p "Enter SERVER port (default: 8888): " response
         if [ -n "$response" ]; then
             local normalized
             normalized=$(normalize_port "$response")
             if [ -n "$normalized" ]; then
                 server_port="$normalized"
             else
-                print_warning "Invalid port input, using default: 7777"
-                server_port="7777"
+                print_warning "Invalid port input, using default: 8888"
+                server_port="8888"
             fi
         fi
         TUNNEL_PORTS+=("$server_port")
         
         # Get port forwarding
         echo -e "\n${YELLOW}Port Forwarding for '$tunnel_name':${NC}"
-local forward_ports=""
+        echo -e "  Format: local_port=target_port (e.g., 443=443, 8443=8080)"
+        local forward_ports=""
         while [ -z "$forward_ports" ]; do
             read -p "Enter port mappings: " forward_ports
             forward_ports=$(echo "$forward_ports" | tr -d '[:space:]')
@@ -2562,7 +2447,7 @@ local forward_ports=""
         local enc_key=""
         read -p "Enter encryption key from server: " enc_key
         if [ -z "$enc_key" ]; then
-            enc_key="$(gen_alpha16)"
+            enc_key="$(gen_secret24)"
             echo -e "  ${YELLOW}Generated new key: $enc_key${NC}"
         fi
         TUNNEL_KEYS+=("$enc_key")
@@ -2585,7 +2470,7 @@ get_multi_server_input() {
     
     # Get global KCP settings (shared across all tunnels)
     echo -e "${YELLOW}Global KCP Configuration (applies to all tunnels):${NC}"
-        read -p "Enter number of parallel connections (default: 6): " response
+        read -p "Enter number of parallel connections (default: 4): " response
     if [ -n "$response" ]; then
         CONN_COUNT=$(echo "$response" | tr -d '[:space:]')
     fi
@@ -2624,7 +2509,7 @@ get_multi_server_input() {
     
     echo -e "\n${YELLOW}MTU Configuration:${NC}"
 step "Set MTU"
-        read -p "Enter MTU value (default: 1150): " response
+        read -p "Enter MTU value (default: 1350): " response
     if [ -n "$response" ]; then
         MTU=$(echo "$response" | tr -d '[:space:]')
     fi
@@ -2648,7 +2533,7 @@ step "Set MTU"
         
         # Get server port (each client tunnel needs different port)
         local server_port=""
-        local default_port=$((7777 + tunnel_count - 1))
+        local default_port=$((8888 + tunnel_count - 1))
         read -p "Enter port to listen on for '$tunnel_name' (default: $default_port): " server_port
         if [ -z "$server_port" ]; then
             server_port="$default_port"
@@ -2665,7 +2550,7 @@ step "Set MTU"
         
         # Generate encryption key
         local enc_key=""
-        enc_key="$(gen_alpha16)"
+        enc_key="$(gen_secret24)"
         TUNNEL_KEYS+=("$enc_key")
         
         echo -e "\n${CYAN}============================================${NC}"
@@ -2778,40 +2663,33 @@ deploy_multi_tunnels() {
 # Main menu
 
 
-
 show_main_menu() {
     show_delta_banner
-    echo -e "${CYAN}${BOLD}Main Menu${NC}"
-    echo ""
 
-    # Each line a different color
-    echo -e "${GREEN}1) ${ICON_DEPLOY} Install Tunnel${NC}"
-    echo -e "${YELLOW}2) ⬆️  Update Paqet Core${NC}"
-    echo -e "${BLUE}3) 📊 List/Status of all tunnels${NC}"
-    echo -e "${MAGENTA}4) ${ICON_GEAR} Manage Existing Tunnels${NC}"
-    echo -e "${RED}0) ${ICON_EXIT} Exit${NC}"
+    echo -e "${MAGENTA}${DIM}┌──────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}1)${NC} ${ICON_DEPLOY} Install Tunnel                                      ${MAGENTA}${DIM}│${NC}"
+    echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} ${ICON_GEAR} Manage Existing Tunnels                             ${MAGENTA}${DIM}│${NC}"
+    echo -e "${MAGENTA}${DIM}└──────────────────────────────────────────────────────────┘${NC}"
     echo ""
 
     local choice=""
-    while true; do
-        read -p "👉 Enter choice (0-4): " choice
+    while [ "$choice" != "1" ] && [ "$choice" != "2" ]; do
+        read -p "👉 Enter choice (1 or 2): " choice
         choice=$(echo "$choice" | tr -d '[:space:]')
-        case "$choice" in
-            1|2|3|4|0) break ;;
-            *) ;;
-        esac
     done
 
     case "$choice" in
         1)
-            echo -e "\n${CYAN}${ICON_DEPLOY} [INSTALL TUNNEL]${NC}"
+            # Install tunnel (single tunnel mode)
+            echo -e "
+${CYAN}${ICON_DEPLOY} [INSTALL TUNNEL]${NC}"
 
             # Location selection instead of client/server
             local loc=""
             while [ "$loc" != "1" ] && [ "$loc" != "2" ]; do
                 echo -e "${YELLOW}Where is this machine located?${NC}"
-                echo -e "  ${GREEN}1) Iran (Client)${NC}"
-                echo -e "  ${CYAN}2) Kharej (Server)${NC}"
+                echo -e "  ${WHITE}1)${NC} Iran (Client)"
+                echo -e "  ${WHITE}2)${NC} Outside Iran (Server)"
                 read -p "👉 Choose (1-2): " loc
                 loc=$(echo "$loc" | tr -d '[:space:]')
             done
@@ -2825,7 +2703,8 @@ show_main_menu() {
             get_single_tunnel_input
 
             # Confirm
-            echo -e "\n${CYAN}============================================${NC}"
+            echo -e "
+${CYAN}============================================${NC}"
             echo -e "${CYAN}  Deployment Summary${NC}"
             echo -e "${CYAN}============================================${NC}"
             echo -e "Mode:       ${MODE^^}"
@@ -2847,170 +2726,59 @@ show_main_menu() {
             deploy_paqet "$CONFIG_FILE"
             ;;
         2)
-            update_paqet_core_interactive
-            show_main_menu
-            ;;
-        3)
-            check_root
-            list_tunnels
-            read -p "Press Enter to continue..." _
-            show_main_menu
-            ;;
-        4)
-            check_root
             show_management_menu
-            ;;
-        0)
-            exit 0
             ;;
     esac
 }
-
 
 
 
 # Management menu
-
-# Auto restart (cron) for a specific tunnel
-auto_restart_menu() {
-    print_header "Auto Restart (Cron)"
-    check_root
-
-    local services=()
-    local i=0
-    while IFS= read -r s; do
-        services+=("$s")
-    done < <(systemctl list-unit-files --type=service 2>/dev/null | awk '{print $1}' | grep -E '^paqet-.*\.service$' | sed 's/\.service$//' | sort)
-
-    if [ "${#services[@]}" -eq 0 ]; then
-        print_warning "No paqet tunnels found"
-        read -p "Press Enter to continue..." _
-        return
-    fi
-
-    echo -e "${CYAN}Select a tunnel:${NC}"
-    for s in "${services[@]}"; do
-        i=$((i+1))
-        echo -e "  ${GREEN}${i})${NC} ${WHITE}${s}${NC}"
-    done
-    echo -e "  ${DIM}b) Back${NC}"
-    echo ""
-
-    local pick=""
-    while true; do
-        read -p "👉 Choose: " pick
-        pick=$(echo "$pick" | tr -d '[:space:]')
-        if [[ "$pick" =~ ^[bB]$ ]]; then
-            return
-        fi
-        if [[ "$pick" =~ ^[0-9]+$ ]] && [ "$pick" -ge 1 ] && [ "$pick" -le "${#services[@]}" ]; then
-            break
-        fi
-    done
-
-    local service="${services[$((pick-1))]}"
-    local cron_file="/etc/cron.d/paqet-autorestart-${service}"
-
-    echo ""
-    echo -e "${YELLOW}Auto restart interval for ${WHITE}${service}${NC}${YELLOW}:${NC}"
-    echo -e "  ${GREEN}1)${NC} 10 min"
-    echo -e "  ${CYAN}2)${NC} 30 min"
-    echo -e "  ${BLUE}3)${NC} 1 hour"
-    echo -e "  ${MAGENTA}4)${NC} 2 hour"
-    echo -e "  ${GREEN}5)${NC} 3 hour"
-    echo -e "  ${CYAN}6)${NC} 4 hour"
-    echo -e "  ${BLUE}7)${NC} 5 hour"
-    echo -e "  ${MAGENTA}8)${NC} 6 hour"
-    echo -e "  ${RED}d)${NC} Disable auto restart"
-    echo -e "  ${DIM}b) Back${NC}"
-    echo ""
-
-    local sel=""
-    read -p "👉 Choose: " sel
-    sel=$(echo "$sel" | tr -d '[:space:]')
-
-    if [[ "$sel" =~ ^[bB]$ ]]; then
-        return
-    fi
-
-    if [[ "$sel" =~ ^[dD]$ ]]; then
-        if [ -f "$cron_file" ]; then
-            rm -f "$cron_file"
-            print_success "Auto restart disabled for $service"
-        else
-            print_info "No auto restart rule found for $service"
-        fi
-        read -p "Press Enter to continue..." _
-        return
-    fi
-
-    local schedule=""
-    case "$sel" in
-        1) schedule="*/10 * * * *" ;;
-        2) schedule="*/30 * * * *" ;;
-        3) schedule="0 * * * *" ;;
-        4) schedule="0 */2 * * *" ;;
-        5) schedule="0 */3 * * *" ;;
-        6) schedule="0 */4 * * *" ;;
-        7) schedule="0 */5 * * *" ;;
-        8) schedule="0 */6 * * *" ;;
-        *) print_warning "Invalid choice"; read -p "Press Enter to continue..." _; return ;;
-    esac
-
-    cat > "$cron_file" <<EOF
-# Auto-generated by DELTA VPN script
-${schedule} root /bin/systemctl restart ${service} >/dev/null 2>&1
-EOF
-
-    chmod 644 "$cron_file"
-    print_success "Auto restart enabled for $service"
-    print_info "Cron: ${schedule}"
-
-    read -p "Press Enter to continue..." _
-}
-
 show_management_menu() {
     while true; do
-        show_delta_banner
-        echo -e "${CYAN}${BOLD}Manage Existing Tunnels${NC}"
         echo ""
-
-        echo -e "${GREEN}1) 📊 List/Status of all tunnels${NC}"
-        echo -e "${YELLOW}2) ▶️  Start all tunnels${NC}"
-        echo -e "${BLUE}3) ⏹️  Stop all tunnels${NC}"
-        echo -e "${MAGENTA}4) 🔄 Restart all tunnels${NC}"
-        echo -e "${GREEN}5) 📜 Monitor all tunnels (live logs)${NC}"
-        echo -e "${YELLOW}6) 🗑️  Remove a tunnel${NC}"
-        echo -e "${BLUE}7) ⚙️  Options (Edit tunnel settings)${NC}"
-        echo -e "${MAGENTA}8) 📈 Reports (View errors/logs)${NC}"
-        echo -e "${GREEN}9) 🛡️ Kernel Optimization${NC}"
-        echo -e "${YELLOW}10) ⏰ Auto Restart${NC}"
-        echo -e "${DIM}b) ↩️  Back to main menu${NC}"
-        echo -e "${RED}0) 🚪 Exit${NC}"
+        echo -e "${CYAN}"
+        ui_line "═" 60
+        echo -e "${WHITE}${ICON_GEAR}  Paqet Tunnel Management${NC}"
+        echo -e "${CYAN}"
+        ui_line "═" 60
+        echo -e "${NC}"
+        echo -e "${MAGENTA}${DIM}┌──────────────────────────────────────────────────────────┐${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}1)${NC} 📊 List/Status of all tunnels                         ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}2)${NC} ▶️  Start all tunnels                                 ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}3)${NC} ⏹️  Stop all tunnels                                  ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}4)${NC} 🔄 Restart all tunnels                                ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}5)${NC} ${ICON_LOGS} Monitor all tunnels (live logs)                ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}6)${NC} 🗑️  Remove a tunnel                                   ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}7)${NC} ⚙️  Options (Edit tunnel settings)                    ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}8)${NC} 📈 Reports (View errors/logs)                         ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}9)${NC} ${ICON_SHIELD} Kernel Optimization                           ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}10)${NC} ⬆️  Update Paqet Core                               ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}b)${NC} ${ICON_BACK} Back to main menu                             ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}│${NC} ${WHITE}0)${NC} ${ICON_EXIT} Exit                                         ${MAGENTA}${DIM}│${NC}"
+        echo -e "${MAGENTA}${DIM}└──────────────────────────────────────────────────────────┘${NC}"
         echo ""
-
+        
         local choice=""
         read -p "👉 Enter choice: " choice
-        choice=$(echo "$choice" | tr -d '[:space:]')
-
+        
         case "$choice" in
-            1) list_tunnels; read -p "Press Enter to continue..." _ ;;
-            2) start_all_tunnels; read -p "Press Enter to continue..." _ ;;
-            3) stop_all_tunnels; read -p "Press Enter to continue..." _ ;;
-            4) restart_all_tunnels; read -p "Press Enter to continue..." _ ;;
+            1) list_tunnels; read -p "Press Enter to continue..." ;;
+            2) start_all_tunnels; read -p "Press Enter to continue..." ;;
+            3) stop_all_tunnels; read -p "Press Enter to continue..." ;;
+            4) restart_all_tunnels; read -p "Press Enter to continue..." ;;
             5) monitor_tunnels ;;
-            6) remove_tunnel ;;
+            6) remove_tunnel; read -p "Press Enter to continue..." ;;
             7) show_options_menu ;;
             8) show_reports_menu ;;
-            9) optimize_kernel_settings ;;
-            10) auto_restart_menu ;;
-            b|B) return ;;
+            9) show_optimization_menu ;;
+            10) update_paqet_core; read -p "Press Enter to continue..." ;;
+            b|B) show_main_menu; return ;;
             0) exit 0 ;;
             *) ;;
         esac
     done
 }
-
 
 # ============================================
 # KERNEL OPTIMIZATION MENU
@@ -3196,40 +2964,21 @@ show_tunnel_options() {
         echo -e "  ${WHITE}1)${NC} Change MTU"
         echo -e "  ${WHITE}2)${NC} Change KCP Mode"
         echo -e "  ${WHITE}3)${NC} Change Connection Count"
-        echo -e "  ${WHITE}4)${NC} Change Port"
-        if grep -q 'role:[[:space:]]*"client"' "$SELECTED_CONFIG" && grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
-            echo -e "  ${WHITE}5)${NC} Change Port Mappings (Iran only)"
-            echo -e "  ${WHITE}6)${NC} View full config"
-            echo -e "  ${WHITE}7)${NC} Back"
-        else
-            echo -e "  ${WHITE}5)${NC} View full config"
-            echo -e "  ${WHITE}6)${NC} Back"
-        fi
+        echo -e "  ${WHITE}2)${NC} Change Port"
+        echo -e "  ${WHITE}5)${NC} View full config"
+        echo -e "  ${WHITE}6)${NC} Back"
         echo ""
         
         local choice=""
-        read -p "Enter choice (1-7): " choice
+        read -p "Enter choice (1-6): " choice
         
         case "$choice" in
             1) edit_mtu ;;
             2) edit_kcp_mode ;;
             3) edit_conn_count ;;
             4) edit_port ;;
-            5)
-                if grep -q 'role:[[:space:]]*"client"' "$SELECTED_CONFIG" && grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
-                    edit_port_mappings
-                else
-                    view_config
-                fi
-                ;;
-            6)
-                if grep -q 'role:[[:space:]]*"client"' "$SELECTED_CONFIG" && grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
-                    view_config
-                else
-                    return
-                fi
-                ;;
-            7) return ;;
+            5) view_config ;;
+            6) return ;;
             *) ;;
         esac
     done
@@ -3267,7 +3016,7 @@ edit_kcp_mode() {
     echo -e "  ${WHITE}1)${NC} fast (Recommended)"
     echo -e "  ${WHITE}2)${NC} fast2 (More aggressive)"
     echo -e "  ${WHITE}3)${NC} fast3 (Most aggressive - very high bandwidth usage)"
-    echo -e "  ${WHITE}4)${NC} normal (Conservative)"
+    echo -e "  ${WHITE}2)${NC} normal (Conservative)"
     echo -e "  ${WHITE}5)${NC} Cancel"
     echo ""
     read -p "Choose new mode (1-5): " choice
@@ -3358,95 +3107,6 @@ edit_port() {
     else
         print_error "Invalid port (must be 1-65535)"
     fi
-}
-
-# Edit port mappings (Iran client only - forward mode)
-edit_port_mappings() {
-    echo ""
-    echo -e "${YELLOW}Change Port Mappings (Forward Rules)${NC}"
-    echo ""
-
-    if ! grep -qE '^[[:space:]]*forward:' "$SELECTED_CONFIG"; then
-        print_error "This tunnel has no port forwarding rules in config."
-        return
-    fi
-
-    # Extract target host from first existing forward rule (target: "host:port")
-    local target_host
-    target_host=$(awk '
-        $1=="target:" {
-            gsub(/"/,"",$2);
-            split($2,a,":");
-            print a[1];
-            exit
-        }' "$SELECTED_CONFIG" 2>/dev/null || true)
-
-    if [ -z "$target_host" ]; then
-        print_warning "Could not detect target host from config. Using 127.0.0.1"
-        target_host="127.0.0.1"
-    fi
-
-    local new_ports=""
-    read -p "Enter port mappings (e.g., 443=443, 8443=8080): " new_ports
-    new_ports=$(echo "$new_ports" | tr -d '[:space:]')
-
-    if [ -z "$new_ports" ]; then
-        print_warning "No input provided. Cancelled."
-        return
-    fi
-
-    # Build a fresh forward block
-    local tmpf
-    tmpf=$(mktemp)
-    {
-        echo "forward:"
-        IFS=',' read -ra pairs <<< "$new_ports"
-        for p in "${pairs[@]}"; do
-            local lp tp
-            lp=$(echo "$p" | cut -d'=' -f1)
-            tp=$(echo "$p" | cut -d'=' -f2)
-            if [[ "$lp" =~ ^[0-9]+$ ]] && [[ "$tp" =~ ^[0-9]+$ ]]; then
-                echo "  - listen: ":$lp""
-                echo "    target: "${target_host}:$tp""
-                echo "    protocol: "tcp""
-            fi
-        done
-    } > "$tmpf"
-
-    # Replace existing forward block in YAML (from 'forward:' until next top-level key)
-    # This awk keeps everything except the old forward block, then injects the new one.
-    local out
-    out=$(mktemp)
-    awk -v newblock_file="$tmpf" '
-        function print_newblock() {
-            while ((getline line < newblock_file) > 0) print line
-            close(newblock_file)
-        }
-        BEGIN { in_forward=0; printed=0 }
-        /^[^[:space:]].*:/ {
-            if (in_forward==1 && printed==0) { print_newblock(); printed=1; in_forward=0 }
-        }
-        /^[[:space:]]*forward:[[:space:]]*$/ { in_forward=1; next }
-        in_forward==1 {
-            # skip old forward list items (indented)
-            if ($0 ~ /^[[:space:]]{2,}-[[:space:]]/ || $0 ~ /^[[:space:]]{4,}/) next
-            # if we see a blank line while in_forward, keep skipping
-            if ($0 ~ /^[[:space:]]*$/) next
-        }
-        { 
-            if (in_forward==0) print $0
-        }
-        END {
-            if (in_forward==1 && printed==0) { print_newblock() }
-        }
-    ' "$SELECTED_CONFIG" > "$out"
-
-    mv "$out" "$SELECTED_CONFIG"
-    rm -f "$tmpf"
-    chmod 600 "$SELECTED_CONFIG"
-
-    print_success "Port mappings updated."
-    restart_tunnel_after_edit
 }
 
 # View full config
